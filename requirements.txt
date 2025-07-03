@@ -2,7 +2,6 @@ streamlit
 ultralytics
 opencv-python
 numpy
-inference_sdk
 supervision
 inference
 python-dotenv 

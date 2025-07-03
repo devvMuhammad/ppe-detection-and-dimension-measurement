@@ -1,0 +1,14 @@
+# Ignore Python virtual environment and cache
+venv/
+__pycache__/
+*.pyc
+
+# Ignore Git and editor-specific files
+.git
+.gitignore
+.vscode/
+.cursor/
+.DS_Store
+
+# Ignore large model files that are downloaded by the app
+*.pt 
