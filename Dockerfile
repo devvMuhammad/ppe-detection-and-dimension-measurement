@@ -4,8 +4,15 @@ FROM python:3.9-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install build dependencies for Python packages
-RUN apt-get update && apt-get install -y build-essential cmake
+# Install build dependencies and runtime libraries for Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libgl1-mesa-glx \
+    libglib2.0-0
 
 # Copy the dependencies file to the working directory
 COPY requirements.txt .
