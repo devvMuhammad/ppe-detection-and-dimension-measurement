@@ -32,10 +32,9 @@ if 'is_running' not in st.session_state:
 
 # --- Core Functions ---
 
-def measure_dimensions(image_bytes, known_dimension_cm, ref_object_name):
+def annotate_known_dimensions(image_bytes, object_name, known_height_m, known_width_m):
     """
-    Processes an image to measure object dimensions based on a reference object.
-    Takes image bytes and returns an annotated image.
+    Processes an image to find a specific object and annotates it with known dimensions.
     """
     model = load_yolo_model()
     nparr = np.frombuffer(image_bytes, np.uint8)
@@ -43,72 +42,53 @@ def measure_dimensions(image_bytes, known_dimension_cm, ref_object_name):
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     results = model(img_rgb)
-    pixels_per_cm = None
     log_messages = []
 
     if results and results[0].masks is not None:
         class_names = results[0].names
         try:
-            ref_class_id = list(class_names.keys())[list(class_names.values()).index(ref_object_name.lower())]
+            target_class_id = list(class_names.keys())[list(class_names.values()).index(object_name.lower())]
         except ValueError:
-            log_messages.append(f"Error: Class '{ref_object_name}' not found in model.")
+            log_messages.append(f"Error: Class '{object_name}' not found in model.")
             log_messages.append(f"Available classes: {list(class_names.values())}")
             return None, log_messages
 
-        reference_mask_found = False
+        object_found = False
         if results[0].boxes:
             for i, box in enumerate(results[0].boxes):
-                if box.cls == ref_class_id:
-                    log_messages.append(f"Found reference object: '{ref_object_name}'")
-                    reference_mask = results[0].masks.xy[i]
-                    reference_mask_found = True
-                    break
+                if box.cls == target_class_id:
+                    log_messages.append(f"Found object: '{object_name}'")
+                    mask = results[0].masks.xy[i]
+                    object_found = True
+                    
+                    contour = np.array(mask, dtype=np.int32)
+                    rect = cv2.minAreaRect(contour)
+                    box_points = cv2.boxPoints(rect)
+                    box_points = box_points.astype(int)
 
-        if not reference_mask_found:
-            log_messages.append(f"Error: Reference object '{ref_object_name}' not detected.")
+                    cv2.drawContours(img_rgb, [box_points], 0, (0, 255, 0), 3)
+
+                    # Create text for dimensions
+                    dim_text = f"H: {known_height_m:.2f}m, W: {known_width_m:.2f}m"
+                    
+                    # Get text size to position it
+                    font_scale = 0.8
+                    font_thickness = 2
+                    (text_w, text_h), baseline = cv2.getTextSize(dim_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
+                    
+                    # Position text at the top-left corner of the bounding box
+                    text_x = box_points[1][0] 
+                    text_y = box_points[1][1] - text_h - 10
+
+                    # Add a background rectangle for the text for better readability
+                    cv2.rectangle(img_rgb, (text_x, text_y - text_h), (text_x + text_w, text_y + baseline), (0, 0, 0), cv2.FILLED)
+                    cv2.putText(img_rgb, dim_text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), font_thickness, cv2.LINE_AA)
+
+                    break 
+
+        if not object_found:
+            log_messages.append(f"Error: Object '{object_name}' not detected.")
             return img_rgb, log_messages
-
-        reference_contour = np.array(reference_mask, dtype=np.int32)
-        ref_rect = cv2.minAreaRect(reference_contour)
-        ref_pixel_dimension = max(ref_rect[1])
-
-        if ref_pixel_dimension > 0:
-            pixels_per_cm = ref_pixel_dimension / known_dimension_cm
-            log_messages.append(f"Reference pixel dimension: {ref_pixel_dimension:.2f} px")
-            log_messages.append(f"Known real-world dimension: {known_dimension_cm} cm")
-            log_messages.append(f"Calculated pixels-per-cm: {pixels_per_cm:.2f}")
-        else:
-            log_messages.append("Error: Could not determine reference object's pixel dimension.")
-            pixels_per_cm = None
-
-        if pixels_per_cm:
-            for i, mask in enumerate(results[0].masks.xy):
-                contour = np.array(mask, dtype=np.int32)
-                rect = cv2.minAreaRect(contour)
-                box = cv2.boxPoints(rect)
-                box = box.astype(int)
-
-                current_class_id = int(results[0].boxes[i].cls.item())
-                color = (255, 0, 0) if current_class_id == ref_class_id else (0, 255, 0)
-                cv2.drawContours(img_rgb, [box], 0, color, 3)
-
-                width_px, height_px = rect[1]
-                width_cm = width_px / pixels_per_cm
-                height_cm = height_px / pixels_per_cm
-                class_name = class_names[current_class_id]
-                dim_text = f"{class_name}: {max(width_cm, height_cm):.1f}x{min(width_cm, height_cm):.1f} cm"
-
-                font_scale = 1
-                font_thickness = 2
-                text_color = (255, 255, 255)
-                (text_w, text_h), baseline = cv2.getTextSize(dim_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
-                center_x, center_y = int(rect[0][0]), int(rect[0][1])
-                text_x = center_x - text_w // 2
-                text_y = center_y + text_h // 2
-                bg_top_left = (text_x - 5, center_y - text_h - baseline)
-                bg_bottom_right = (text_x + text_w + 5, center_y)
-                cv2.rectangle(img_rgb, bg_top_left, bg_bottom_right, color, cv2.FILLED)
-                cv2.putText(img_rgb, dim_text, (text_x, center_y - baseline), cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, font_thickness, cv2.LINE_AA)
 
         return img_rgb, log_messages
     else:
@@ -138,10 +118,11 @@ if app_mode == "About":
 elif app_mode == "Dimension Measurement from Image":
     st.header("Dimension Measurement from Image")
     
-    st.sidebar.subheader("Measurement Settings")
-    ref_name = st.sidebar.text_input("Reference Object Name", "cell phone")
-    known_dim = st.sidebar.number_input("Reference Object's Longest Dimension (cm)", value=16.36, step=0.1)
-    
+    st.sidebar.subheader("Object Settings")
+    object_name = st.sidebar.text_input("Object Name", "car")
+    known_height = st.sidebar.number_input("Object Height (m)", value=1.41, step=0.01)
+    known_width = st.sidebar.number_input("Object Width (m)", value=1.40, step=0.01)
+
     uploaded_image = st.file_uploader("Upload an image...", type=["png", "jpg", "jpeg"])
     
     if uploaded_image:
@@ -150,7 +131,12 @@ elif app_mode == "Dimension Measurement from Image":
             st.image(uploaded_image, caption="Uploaded Image", use_container_width=True)
         
         with st.spinner("Analyzing image..."):
-            annotated_image, logs = measure_dimensions(uploaded_image.getvalue(), known_dim, ref_name)
+            annotated_image, logs = annotate_known_dimensions(
+                uploaded_image.getvalue(), 
+                object_name, 
+                known_height, 
+                known_width
+            )
         
         with col2:
             if annotated_image is not None:
