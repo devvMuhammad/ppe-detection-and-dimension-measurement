@@ -4,7 +4,8 @@ import numpy as np
 from ultralytics import YOLO
 from inference import InferencePipeline
 from inference.core.interfaces.camera.entities import VideoFrame
-import supervision as sv
+from supervision.detection.core import Detections
+from supervision.annotators.core import LabelAnnotator, BoxAnnotator
 import os
 from tempfile import NamedTemporaryFile
 from dotenv import load_dotenv
@@ -157,6 +158,15 @@ elif app_mode == "PPE Detection on Video":
     st.sidebar.subheader("Video Source")
     source = st.sidebar.radio("Select source", ["Webcam", "Upload a video"])
 
+    st.sidebar.subheader("Violation Settings")
+    violation_threshold = st.sidebar.number_input(
+        "Violation Threshold", 
+        min_value=0, 
+        value=0, 
+        step=1, 
+        help="Show a warning if the number of detected violations exceeds this threshold."
+    )
+
     video_reference = None
     temp_video_path = None
     if source == "Webcam":
@@ -172,6 +182,8 @@ elif app_mode == "PPE Detection on Video":
 
     if video_reference is not None:
         # Create a placeholder for the video feed
+        warning_placeholder = st.empty()
+        debug_placeholder = st.empty()
         image_placeholder = st.empty()
         
         col1, col2 = st.columns(2)
@@ -179,12 +191,34 @@ elif app_mode == "PPE Detection on Video":
         stop_button = col2.button("Stop Inference", key="stop_inference")
 
         # Define the sink for Streamlit, with smaller annotations
-        label_annotator = sv.LabelAnnotator(text_scale=0.4, text_thickness=1, text_padding=3)
-        box_annotator = sv.BoxAnnotator(thickness=1)
+        label_annotator = LabelAnnotator(text_scale=0.4, text_thickness=1, text_padding=3)
+        box_annotator = BoxAnnotator(thickness=1)
+
+        # Define violation classes based on your model's output
+        VIOLATION_CLASSES = {"NO-Hardhat", "NO-Safety Vest"}
 
         def streamlit_sink(predictions: dict, video_frame: VideoFrame):
             labels = [p["class"] for p in predictions["predictions"]]
-            detections = sv.Detections.from_inference(predictions)
+            detections = Detections.from_inference(predictions)
+            
+            # Check for violations
+            violation_detected = any(label in VIOLATION_CLASSES for label in labels)
+
+            # Debug information
+            debug_info = f"**Debug Info:**\n"
+            debug_info += f"- Total detections: {len(labels)}\n"
+            debug_info += f"- Detected classes: {list(set(labels))}\n"
+            debug_info += f"- Violation classes: {VIOLATION_CLASSES}\n"
+            debug_info += f"- Violation detected: {violation_detected}\n"
+            debug_info += f"- Threshold: {violation_threshold}\n"
+            
+            debug_placeholder.markdown(debug_info)
+
+            if violation_detected:
+                warning_placeholder.error(f"🚨 PPE Violation Detected!")
+                st.toast(f"🚨 PPE Violation Detected!", icon="⚠️")
+            else:
+                warning_placeholder.empty()
             
             # Annotate the frame
             image = label_annotator.annotate(scene=video_frame.image.copy(), detections=detections, labels=labels)
@@ -212,5 +246,7 @@ elif app_mode == "PPE Detection on Video":
             if temp_video_path and os.path.exists(temp_video_path):
                 os.remove(temp_video_path)
             st.info("Inference stopped.")
-            # Clear the image placeholder
+            # Clear the placeholders
+            warning_placeholder.empty()
+            debug_placeholder.empty()
             image_placeholder.empty() 
