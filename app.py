@@ -9,6 +9,7 @@ from supervision.annotators.core import LabelAnnotator, BoxAnnotator
 import os
 from tempfile import NamedTemporaryFile
 from dotenv import load_dotenv
+import time
 
 # Load environment variables
 load_dotenv()
@@ -30,6 +31,8 @@ if 'pipeline' not in st.session_state:
     st.session_state.pipeline = None
 if 'is_running' not in st.session_state:
     st.session_state.is_running = False
+if 'last_toast_time' not in st.session_state:
+    st.session_state.last_toast_time = 0
 
 # --- Core Functions ---
 
@@ -159,12 +162,15 @@ elif app_mode == "PPE Detection on Video":
     source = st.sidebar.radio("Select source", ["Webcam", "Upload a video"])
 
     st.sidebar.subheader("Violation Settings")
-    violation_threshold = st.sidebar.number_input(
-        "Violation Threshold", 
-        min_value=0, 
-        value=0, 
-        step=1, 
-        help="Show a warning if the number of detected violations exceeds this threshold."
+    
+    st.sidebar.subheader("Video Settings")
+    fps_limit = st.sidebar.slider(
+        "Max FPS", 
+        min_value=1, 
+        max_value=30, 
+        value=5, 
+        step=1,
+        help="Limit the frame rate to reduce processing speed"
     )
 
     video_reference = None
@@ -210,13 +216,15 @@ elif app_mode == "PPE Detection on Video":
             debug_info += f"- Detected classes: {list(set(labels))}\n"
             debug_info += f"- Violation classes: {VIOLATION_CLASSES}\n"
             debug_info += f"- Violation detected: {violation_detected}\n"
-            debug_info += f"- Threshold: {violation_threshold}\n"
             
             debug_placeholder.markdown(debug_info)
 
             if violation_detected:
+                current_time = time.time()
+                if current_time - st.session_state.last_toast_time > 5:  # 5 second cooldown
+                    st.toast(f"🚨 PPE Violation Detected!", icon="⚠️")
+                    st.session_state.last_toast_time = current_time
                 warning_placeholder.error(f"🚨 PPE Violation Detected!")
-                st.toast(f"🚨 PPE Violation Detected!", icon="⚠️")
             else:
                 warning_placeholder.empty()
             
@@ -233,6 +241,7 @@ elif app_mode == "PPE Detection on Video":
                 video_reference=video_reference,
                 on_prediction=streamlit_sink,
                 api_key=api_key,
+                max_fps=fps_limit
             )
             st.session_state.pipeline.start()
             st.session_state.is_running = True
