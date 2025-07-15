@@ -33,6 +33,8 @@ if 'is_running' not in st.session_state:
     st.session_state.is_running = False
 if 'last_toast_time' not in st.session_state:
     st.session_state.last_toast_time = 0
+if 'consecutive_violations' not in st.session_state:
+    st.session_state.consecutive_violations = 0
 
 # --- Core Functions ---
 
@@ -162,6 +164,14 @@ elif app_mode == "PPE Detection on Video":
     source = st.sidebar.radio("Select source", ["Webcam", "Upload a video"])
 
     st.sidebar.subheader("Violation Settings")
+    consecutive_threshold = st.sidebar.number_input(
+        "Consecutive Violation Threshold", 
+        min_value=1, 
+        max_value=20, 
+        value=3, 
+        step=1,
+        help="Number of consecutive frames with violations needed to trigger alert"
+    )
     
     st.sidebar.subheader("Video Settings")
     fps_limit = st.sidebar.slider(
@@ -210,21 +220,28 @@ elif app_mode == "PPE Detection on Video":
             # Check for violations
             violation_detected = any(label in VIOLATION_CLASSES for label in labels)
 
+            # Handle consecutive violations
+            if violation_detected:
+                st.session_state.consecutive_violations += 1
+            else:
+                st.session_state.consecutive_violations = 0
+
             # Debug information
             debug_info = f"**Debug Info:**\n"
             debug_info += f"- Total detections: {len(labels)}\n"
             debug_info += f"- Detected classes: {list(set(labels))}\n"
             debug_info += f"- Violation classes: {VIOLATION_CLASSES}\n"
             debug_info += f"- Violation detected: {violation_detected}\n"
+            debug_info += f"- Consecutive violations: {st.session_state.consecutive_violations}/{consecutive_threshold}\n"
             
             debug_placeholder.markdown(debug_info)
 
-            if violation_detected:
+            if st.session_state.consecutive_violations >= consecutive_threshold:
                 current_time = time.time()
                 if current_time - st.session_state.last_toast_time > 5:  # 5 second cooldown
-                    st.toast(f"🚨 PPE Violation Detected!", icon="⚠️")
+                    st.toast(f"🚨 PPE Violation Detected! ({st.session_state.consecutive_violations} consecutive frames)", icon="⚠️")
                     st.session_state.last_toast_time = current_time
-                warning_placeholder.error(f"🚨 PPE Violation Detected!")
+                warning_placeholder.error(f"🚨 PPE Violation Detected! ({st.session_state.consecutive_violations} consecutive frames)")
             else:
                 warning_placeholder.empty()
             
@@ -251,6 +268,7 @@ elif app_mode == "PPE Detection on Video":
             if st.session_state.pipeline:
                 st.session_state.pipeline.terminate()
             st.session_state.is_running = False
+            st.session_state.consecutive_violations = 0  # Reset counter
             # Clean up temporary file if it exists
             if temp_video_path and os.path.exists(temp_video_path):
                 os.remove(temp_video_path)
